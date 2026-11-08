@@ -4,7 +4,7 @@ import re
 import requests
 from pathlib import Path
 
-from .fetchers import fetch_if_modified_since
+from .fetchers import fetch_if_modified_since, fetch_with_verification
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +123,8 @@ def fetch_packages(entries: list[dict], repo_dir: Path, env: dict) -> bool:
       - ``use_latest_tag`` (optional, default ``true``): when ``false``, skips GitHub's
         "latest" pointer and instead finds the most recent release whose tag contains
         no pre-release indicators (alpha, beta, rc, etc.)
+      - ``verify`` (optional): Argument list for an upstream verifier, with
+        ``{path}`` substituted with the downloaded file path.
 
     :param entries: List of GitHub release config entries from config.yaml.
     :param repo_dir: Local APT repository directory.
@@ -161,7 +163,15 @@ def fetch_packages(entries: list[dict], repo_dir: Path, env: dict) -> bool:
                 url = f"{entry['repo']}/releases/download/{tag}/{filename}"
 
             try:
-                if fetch_if_modified_since(url, repo_dir / filename):
+                dest = repo_dir / filename
+                fetch_result = (
+                    fetch_with_verification(
+                        url, dest, fetch_if_modified_since, entry["verify"]
+                    )
+                    if "verify" in entry
+                    else fetch_if_modified_since(url, dest)
+                )
+                if fetch_result:
                     changed = True
             except requests.exceptions.HTTPError as e:
                 if (

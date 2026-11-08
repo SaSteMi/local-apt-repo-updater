@@ -1,6 +1,10 @@
 import os
 import logging
+import shutil
 import requests
+import subprocess
+import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from datetime import datetime, timezone
 from email.utils import format_datetime, parsedate_to_datetime
@@ -140,3 +144,49 @@ def fetch_with_size_check(url: str, dest: Path) -> bool:
     apply_last_modified(r, dest)
     logger.info(f"Fetched new package {url}")
     return True
+
+
+def fetch_with_verification(
+    url: str,
+    dest: Path,
+    fetch_fn: Callable[[str, Path], bool],
+    verifier: list[str],
+) -> bool:
+    """
+    Fetch a file and verify it before keeping the new contents.
+
+    ``verifier`` is an argument list. Every literal ``{path}`` token is replaced
+    with the downloaded file path; no shell is used. If verification fails, an
+    existing destination is restored and a newly-created destination is
+    removed.
+    """
+    if not isinstance(verifier, list) or not verifier or not all(
+        isinstance(argument, str) for argument in verifier
+    ):
+        raise ValueError("Verifier command must be a non-empty list of strings")
+    if not any("{path}" in argument for argument in verifier):
+        raise ValueError("Verifier command must contain a {path} argument")
+
+    with tempfile.TemporaryDirectory(
+        prefix=".local-apt-repo-updater-", dir=dest.parent
+    ) as backup_dir:
+        backup = Path(backup_dir) / dest.name
+        had_existing = dest.exists()
+        if had_existing:
+            shutil.copy2(dest, backup)
+
+        try:
+            changed = fetch_fn(url, dest)
+            if not changed:
+                return False
+
+            command = [argument.replace("{path}", str(dest)) for argument in verifier]
+            logger.debug(f"Verifying {dest} with {command[0]!r}")
+            subprocess.run(command, check=True)
+            return True
+        except Exception:
+            if had_existing:
+                shutil.copy2(backup, dest)
+            else:
+                dest.unlink(missing_ok=True)
+            raise

@@ -8,7 +8,7 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
-from .fetchers import fetch_if_modified_since
+from .fetchers import fetch_if_modified_since, fetch_with_verification
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +207,8 @@ def fetch_packages(entries: list[dict], repo_dir: Path, env: dict) -> bool:
       - ``version_url``: URL of an Apache directory listing whose subdirectory names are version
         strings. The newest version is resolved and substituted as ``{APP_VERSION}`` into ``url``
         and ``filename`` before processing.
+      - ``verify``: Argument list for an upstream verifier, with ``{path}``
+        substituted with the downloaded file path.
 
     :param entries: List of apache_directory config entries from config.yaml.
     :param repo_dir: Local APT repository directory.
@@ -242,7 +244,14 @@ def fetch_packages(entries: list[dict], repo_dir: Path, env: dict) -> bool:
                 file_url = f"{url.rstrip('/')}/{filename}"
                 dest = repo_dir / filename
                 logger.debug(f"Newest match for {pattern!r} at {url}: {filename}")
-                if fetch_if_modified_since(file_url, dest):
+                fetch_result = (
+                    fetch_with_verification(
+                        file_url, dest, fetch_if_modified_since, entry["verify"]
+                    )
+                    if "verify" in entry
+                    else fetch_if_modified_since(file_url, dest)
+                )
+                if fetch_result:
                     changed = True
         except Exception as e:
             logger.error(f"Failed to process {entry.get('url', entry)!r}: {e}")

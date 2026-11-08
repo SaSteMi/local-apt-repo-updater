@@ -20,6 +20,7 @@ from local_apt_repo_updater.fetchers import (
     apply_last_modified,
     fetch_head_local_compare,
     fetch_if_modified_since,
+    fetch_with_verification,
     fetch_with_size_check,
     http_date_from_mtime,
 )
@@ -288,6 +289,87 @@ class TestFetchWithSizeCheck:
         ):
             result = fetch_with_size_check("http://example.com/pkg.deb", dest)
         assert result is True
+
+
+# ---------------------------------------------------------------------------
+# fetchers.fetch_with_verification
+# ---------------------------------------------------------------------------
+
+
+class TestFetchWithVerification:
+    def test_successful_verification_keeps_download(self, tmp_path):
+        dest = tmp_path / "pkg.deb"
+
+        def fetch_fn(url, path):
+            path.write_bytes(b"new")
+            return True
+
+        with patch("local_apt_repo_updater.fetchers.subprocess.run") as run:
+            assert fetch_with_verification(
+                "https://example.com/pkg.deb",
+                dest,
+                fetch_fn,
+                ["dpkg-sig", "--verify", "{path}"],
+            )
+
+        assert dest.read_bytes() == b"new"
+        run.assert_called_once_with(
+            ["dpkg-sig", "--verify", str(dest)],
+            check=True,
+        )
+
+    def test_failed_verification_restores_existing_file(self, tmp_path):
+        dest = tmp_path / "pkg.deb"
+        dest.write_bytes(b"old")
+
+        def fetch_fn(url, path):
+            path.write_bytes(b"bad")
+            return True
+
+        with patch(
+            "local_apt_repo_updater.fetchers.subprocess.run",
+            side_effect=subprocess.CalledProcessError(1, ["dpkg-sig"]),
+        ):
+            with pytest.raises(subprocess.CalledProcessError):
+                fetch_with_verification(
+                    "https://example.com/pkg.deb",
+                    dest,
+                    fetch_fn,
+                    ["dpkg-sig", "--verify", "{path}"],
+                )
+
+        assert dest.read_bytes() == b"old"
+
+    def test_failed_verification_removes_new_file(self, tmp_path):
+        dest = tmp_path / "pkg.deb"
+
+        def fetch_fn(url, path):
+            path.write_bytes(b"bad")
+            return True
+
+        with patch(
+            "local_apt_repo_updater.fetchers.subprocess.run",
+            side_effect=subprocess.CalledProcessError(1, ["dpkg-sig"]),
+        ):
+            with pytest.raises(subprocess.CalledProcessError):
+                fetch_with_verification(
+                    "https://example.com/pkg.deb",
+                    dest,
+                    fetch_fn,
+                    ["dpkg-sig", "--verify", "{path}"],
+                )
+
+        assert not dest.exists()
+
+    @pytest.mark.parametrize("verifier", [[], ["dpkg-sig", "--verify"]])
+    def test_rejects_invalid_verifier_command(self, tmp_path, verifier):
+        with pytest.raises(ValueError):
+            fetch_with_verification(
+                "https://example.com/pkg.deb",
+                tmp_path / "pkg.deb",
+                MagicMock(),
+                verifier,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -805,6 +887,27 @@ class TestFixedUrlsFetchPackages:
         with patch.dict(fixed_urls._FETCH_MODES, {"content_length": mock_fn}):
             fixed_fetch_packages([entry], tmp_path, {})
             mock_fn.assert_called_once()
+
+    def test_verify_uses_configured_verifier(self, tmp_path):
+        entry = {
+            **self.BASE_ENTRY,
+            "verify": ["dpkg-sig", "--verify", "{path}"],
+        }
+        mock_fn = MagicMock(return_value=True)
+        with (
+            patch.dict(fixed_urls._FETCH_MODES, {"last_modified": mock_fn}),
+            patch(
+                "local_apt_repo_updater.fixed_urls.fetch_with_verification",
+                return_value=True,
+            ) as mock_verify,
+        ):
+            assert fixed_fetch_packages([entry], tmp_path, {}) is True
+        mock_verify.assert_called_once_with(
+            "https://example.com/downloads/pkg.deb",
+            tmp_path / "pkg.deb",
+            mock_fn,
+            ["dpkg-sig", "--verify", "{path}"],
+        )
 
     def test_unknown_mode_logs_error_and_does_not_raise(self, tmp_path, caplog):
         entry = {**self.BASE_ENTRY, "conditional": "telepathy"}

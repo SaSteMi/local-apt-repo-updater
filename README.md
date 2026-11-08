@@ -105,6 +105,21 @@ are all handled correctly.
 | Field | Default | Description |
 |---|---|---|
 | `conditional` | `last_modified` | Strategy used to decide whether to re-download the file. See table below. |
+| `verify` | unset | Optional command argument list used to verify a downloaded file. Every `{path}` token is replaced with the downloaded file path; commands are run without a shell. If verification fails, the new file is discarded and an existing file is restored. |
+
+`verify` is also supported on `github_releases` and `apache_directory` entries. Use a YAML list,
+not a shell string, for example:
+
+```yaml
+fixed_urls:
+- url: https://downloads.example.com/zoom_amd64.deb
+  filename: zoom_amd64.deb
+  verify: [dpkg-sig, --verify, "{path}"]
+```
+
+The verifier runs only after a new download. A non-zero exit status, missing executable, empty
+command, or command without `{path}` rejects the download; the previous package remains in place
+and repository metadata is not rebuilt from the rejected file.
 
 | `conditional` value | Strategy |
 |---|---|
@@ -141,6 +156,9 @@ fixed_urls:
 - url: https://example.com/downloads
   filename: example.deb
   conditional: last_modified
+- url: https://downloads.example.com/zoom_amd64.deb
+  filename: zoom_amd64.deb
+  verify: [dpkg-sig, --verify, "{path}"]
 - url: https://no-lastmodified-headers.example.net/linux/repo/ubuntu_{VERSION_ID}/amd64
   filename: example_{VERSION_ID}_amd64.deb
   conditional: content_length
@@ -258,7 +276,8 @@ pulls from give it anything to verify that against:
 - **`apache_directory`**: just an HTML directory listing, no signatures at all. If an entry here
   is actually mirroring a real signed apt repo (as opposed to a bare `.deb` dump), the better fix
   is to skip this tool for that source and add the vendor's real apt repo (with their real signing
-  key) directly instead.
+  key) directly instead. If you have a vendor-specific verifier for a downloaded package,
+  configure it on that entry with the `verify` option described above.
 
 All fetches go over HTTPS with normal TLS verification (nothing in this codebase disables it), so
 each download is at least protected against being altered in transit from the host it names.

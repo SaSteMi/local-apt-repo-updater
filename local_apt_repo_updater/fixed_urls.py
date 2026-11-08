@@ -4,6 +4,7 @@ from pathlib import Path
 from .fetchers import (
     fetch_if_modified_since,
     fetch_head_local_compare,
+    fetch_with_verification,
     fetch_with_size_check,
 )
 
@@ -28,6 +29,8 @@ def fetch_packages(entries: list[dict], repo_dir: Path, env: dict) -> bool:
       - ``conditional`` (optional): Staleness check strategy — one of
         ``last_modified`` (default), ``last_modified_local_compare``,
         or ``content_length``
+      - ``verify`` (optional): Argument list for an upstream verifier, with
+        ``{path}`` substituted with the downloaded file path.
 
     :param entries: List of fixed URL config entries from config.yaml.
     :param repo_dir: Local APT repository directory.
@@ -50,7 +53,12 @@ def fetch_packages(entries: list[dict], repo_dir: Path, env: dict) -> bool:
                 )
 
             logger.debug(f"Processing {url} (mode={mode})")
-            if fetch_fn(url, dest):
+            fetch_result = (
+                fetch_with_verification(url, dest, fetch_fn, entry["verify"])
+                if "verify" in entry
+                else fetch_fn(url, dest)
+            )
+            if fetch_result:
                 changed = True
         except Exception as e:
             logger.error(f"Failed to fetch {entry.get('url', entry)!r}: {e}")

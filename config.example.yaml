@@ -11,6 +11,9 @@ fixed_urls:
 - url: https://example.com/downloads
   filename: example.deb
   conditional: last_modified
+- url: https://zoom.example.com/client/latest/zoom_amd64.deb
+  filename: zoom_amd64.deb
+  verify: [dpkg-sig, --verify, "{path}"]
 - url: https://no-lastmodified-headers.example.net/linux/repo/ubuntu_{VERSION_ID}/amd64
   filename: example_{VERSION_ID}_amd64.deb
   conditional: content_length
